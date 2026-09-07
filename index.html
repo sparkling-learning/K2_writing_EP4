@@ -27,7 +27,6 @@
             height: 100vh;
         }
 
-        /* 大象圖片與定位容器 */
         #elephant-wrapper {
             position: absolute;
             top: 62%; 
@@ -56,7 +55,6 @@
             pointer-events: none;
         }
 
-        /* 🟢 修正：起點稍微向下微調，維持在兩眉之間 */
         #start-point {
             position: absolute;
             width: 45px;
@@ -67,11 +65,10 @@
             transform: translate(-50%, -50%);
             box-shadow: 0 4px 8px rgba(0,0,0,0.3);
             z-index: 6;
-            top: 42%; /* 由 38% 微調至 42% */
+            top: 42%; 
             left: 44%;
         }
 
-        /* 終點：鼻子末端 */
         #end-point {
             position: absolute;
             width: 60px;
@@ -110,6 +107,31 @@
 
         .star.active {
             color: #ffd32a;
+        }
+
+        /* 🟢 新增：出界重來的正向鼓勵提示框 */
+        #encourage-toast {
+            position: absolute;
+            top: 25%;
+            left: 50%;
+            transform: translateX(-50%) scale(0.8);
+            background-color: rgba(255, 255, 255, 0.95);
+            color: #ff9f43; /* 溫暖的橘黃色 */
+            font-size: 4vw;
+            font-weight: bold;
+            padding: 15px 35px;
+            border-radius: 30px;
+            border: 4px solid #ffd32a;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.15);
+            z-index: 40;
+            opacity: 0;
+            pointer-events: none;
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        #encourage-toast.show {
+            opacity: 1;
+            transform: translateX(-50%) scale(1);
         }
 
         #reward-screen {
@@ -172,6 +194,7 @@
 
         @media (max-width: 768px) {
             #reward-text { font-size: 12vw; }
+            #encourage-toast { font-size: 6vw; padding: 12px 25px; }
             #stars-container { font-size: 35px; }
             #restart-btn { font-size: 24px; padding: 12px 30px; }
         }
@@ -188,14 +211,15 @@
             <span class="star" id="star-5">★</span>
         </div>
 
+        <!-- 🟢 新增：提示框 DOM 元素 -->
+        <div id="encourage-toast">慢慢來!再試一次!</div>
+
         <canvas id="drawing-canvas"></canvas>
 
         <div id="elephant-wrapper">
-            <!-- 🟢 更新：使用你自己準備好的 9new.png -->
             <img id="elephant" src="9new.png" alt="大象">
             
             <svg id="guide-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
-                <!-- 🟢 修正：引導線的起點 M 配合紅點稍微拉低 (由 38 改為 42) -->
                 <path d="M 44 42 C 43 55, 32 65, 22 60" fill="none" stroke="rgba(255, 255, 255, 0.6)" stroke-width="6" stroke-linecap="round" />
                 <path d="M 44 42 C 43 55, 32 65, 22 60" fill="none" stroke="#ffd32a" stroke-width="1.5" stroke-dasharray="2 2" stroke-linecap="round" />
             </svg>
@@ -218,24 +242,51 @@
         const rewardScreen = document.getElementById('reward-screen');
         const rewardText = document.getElementById('reward-text');
         const restartBtn = document.getElementById('restart-btn');
+        const encourageToast = document.getElementById('encourage-toast');
 
         let isDrawing = false;
         let progress = 0;
         const maxProgress = 5;
+        let toastTimeout;
         
         const hitRadius = 80; 
+        const safeZoneWidth = 110; 
+        let virtualPath = new Path2D();
+
+        // 🟢 新增：顯示鼓勵語句的函數
+        function showEncouragement() {
+            encourageToast.classList.add('show');
+            clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => {
+                encourageToast.classList.remove('show');
+            }, 1500);
+        }
+
+        function updateVirtualPath() {
+            const wrapper = document.getElementById('elephant-wrapper');
+            const rect = wrapper.getBoundingClientRect();
+            
+            const getX = (pct) => rect.left + (pct / 100) * rect.width;
+            const getY = (pct) => rect.top + (pct / 100) * rect.height;
+
+            virtualPath = new Path2D();
+            virtualPath.moveTo(getX(44), getY(42));
+            virtualPath.bezierCurveTo(getX(43), getY(55), getX(32), getY(65), getX(22), getY(60));
+        }
 
         function resizeCanvas() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
             
-            ctx.lineWidth = 26; 
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
             ctx.strokeStyle = '#4a69bd'; 
+            
+            updateVirtualPath(); 
         }
 
         window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('load', resizeCanvas);
         resizeCanvas();
 
         function getCenter(el) {
@@ -260,11 +311,25 @@
                 isDrawing = true;
                 ctx.beginPath();
                 ctx.moveTo(startPos.x, startPos.y);
+                // 開始畫時確保隱藏先前的提示
+                encourageToast.classList.remove('show');
+                clearTimeout(toastTimeout);
             }
         });
 
         canvas.addEventListener('pointermove', (e) => {
             if (!isDrawing) return;
+
+            ctx.lineWidth = safeZoneWidth; 
+            if (!ctx.isPointInStroke(virtualPath, e.clientX, e.clientY)) {
+                // 🟢 修正：出界時清空畫布，並顯示鼓勵語句
+                isDrawing = false;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                showEncouragement();
+                return;
+            }
+
+            ctx.lineWidth = 26; 
             ctx.lineTo(e.clientX, e.clientY);
             ctx.stroke();
         });
@@ -279,7 +344,9 @@
             if (dist < hitRadius) {
                 handleSuccess();
             } else {
+                // 🟢 修正：提早鬆開手沒有到達終點，同樣顯示鼓勵語句
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
+                showEncouragement();
             }
         });
 
@@ -295,7 +362,7 @@
             document.getElementById(`star-${progress}`).classList.add('active');
 
             if (progress >= maxProgress) {
-                rewardText.innerText = "欣賞你！真努力！";
+                rewardText.innerText = "欣賞你！真努力";
                 restartBtn.style.display = 'block';
                 rewardScreen.classList.add('show');
             } else {
